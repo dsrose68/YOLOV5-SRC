@@ -1,0 +1,100 @@
+# Install YOLOv5
+!pip install torch torchvision
+!git clone https://github.com/ultralytics/yolov5
+%cd yolov5
+!pip install -r requirements.txt
+
+%cd /content/yolov5
+!pip install gdown
+#crowdhuman_yolov5m.pt
+!gdown "https://drive.google.com/uc?export=download&id=1gglIwqxaH2iTvy6lZlXuAcMpd_U0GCUb"   
+!wget -c -t 0 https://github.com/ultralytics/yolov5/releases/download/v6.1/yolov5n.pt
+#wget -c -t 0 https://github.com/ultralytics/yolov5/releases/download/v6.1/yolov5s.pt
+!wget -c -t 0 https://github.com/ultralytics/yolov5/releases/download/v6.1/yolov5m.pt
+!wget -c -t 0 https://github.com/ultralytics/yolov5/releases/download/v6.1/yolov5l.pt
+!wget -c -t 0 https://github.com/ultralytics/yolov5/releases/download/v6.1/yolov5x.pt
+
+import torch
+import cv2
+import os
+from google.colab import drive
+from google.colab.patches import cv2_imshow
+
+MAX_FRAMES = 10  # Set to the number of frames to process, or 0 for the whole video
+
+# Check if Google Drive is already mounted; if not, mount it
+if not os.path.ismount('/content/gdrive'):
+    drive.mount('/content/gdrive', force_remount=True)
+
+# Load the YOLOv5 model
+# model = torch.hub.load('ultralytics/yolov5', 'yolov5s', pretrained=True)
+
+def process_video(video_path, output_path=None, model_choice='s'):
+    # Define model path based on the choice
+    model_path = f'yolov5{model_choice}.pt'
+    model_path = f'/content/yolov5/crowdhuman_yolov5m.pt'
+    model_path = f'/content/yolov5/yolov5m.pt'
+
+    # Load the YOLOv5 model
+    model = torch.hub.load('ultralytics/yolov5', 'custom', path=model_path, force_reload=True)
+    
+    cap = cv2.VideoCapture(video_path)
+    frame_count = 0  # Initialize frame count
+
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    buffer_size = int(fps)  # Frames for 1 second
+    pre_detection_buffer = []
+    post_detection_counter = 0
+
+    out = None
+    if output_path:
+        fourcc = cv2.VideoWriter_fourcc(*'MP4V')
+        out = cv2.VideoWriter(output_path, fourcc, fps, (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))))
+
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret or (0 < MAX_FRAMES <= frame_count):
+            break  # Stop if end of video or reached MAX_FRAMES
+        frame_count += 1  # Increment frame count
+
+        results = model(frame)
+        head_detected = any(cls == 0 for *_, cls in results.xyxy[0])  # Check if head is detected
+
+        # Draw bounding boxes
+        for x1, y1, x2, y2, _, cls in results.xyxy[0]:
+            if cls == 0:  # Class 'person'
+                # Assuming the head is roughly the top 25% of the body and centered
+                head_height = int((y2 - y1) * 0.25)
+                head_y = int(y1 + (y2 - y1) * 0.1)  # Adjust y to start from slightly below the top of the body
+                head_width = int((x2 - x1) * 0.6)  # Assuming head width is 60% of the body width
+                head_x = int(x1 + (x2 - x1) * 0.2)  # Center the head box by shifting it to the right
+                cv2.rectangle(frame, (head_x, head_y), (head_x + head_width, head_y + head_height), (0, 255, 0), 2)
+
+        if head_detected:
+            post_detection_counter = buffer_size
+            for buffered_frame in pre_detection_buffer:
+                if out:
+                    out.write(buffered_frame)
+            pre_detection_buffer = []
+        elif post_detection_counter == 0 and len(pre_detection_buffer) == buffer_size:
+            pre_detection_buffer.pop(0)
+
+        pre_detection_buffer.append(frame)
+        if post_detection_counter > 0:
+            post_detection_counter -= 1
+
+        if out and (head_detected or post_detection_counter > 0):
+            out.write(frame)
+        elif not output_path:
+            cv2_imshow(frame)
+
+        if cv2.waitKey(1) == ord('q'):
+            break
+
+    cap.release()
+    if out:
+        out.release()
+    cv2.destroyAllWindows()
+
+# Call the function with your video path
+process_video('/content/gdrive/My Drive/19Video1.mp4', None, 'm')
